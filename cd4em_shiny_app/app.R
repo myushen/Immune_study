@@ -4,25 +4,11 @@
 #  such as B, monocytic cell etc.
 # TL;DR: It answers the question whether Tbx21 CD4EM outliers have truely higher expression across other cell types.
 
-library(cellNexus)
 library(dplyr)
-library(duckdb)
-library(tidySingleCellExperiment)
-library(tidybulk)
+library(tibble)
 library(ggplot2)
-library(tidyHeatmap)
-library(hrbrthemes)
-library(scater)
-library(scran)
-library(tidyseurat)
-library(ggrepel)
-library(stringr)
-library(clusterProfiler)
-library(edgeR)
-library(purrr)
-library(tidyHeatmap)
-library(zellkonverter)
 library(shiny)
+library(tidySingleCellExperiment)
 
 friendly_cols <- dittoSeq::dittoColors()
 
@@ -119,9 +105,9 @@ cell_type_coarse <- tribble(
 )
 
 # Load data
-data_dir <- "~/projects/cellNexus/Joanna_immune_study/data"
+data_dir <- "/Users/shen.m/Documents/GitHub/Immune_study/cd4em_shiny_app/data"
 
-se <- readH5AD(file.path(data_dir, "cd4em_se.h5ad"))
+se <- readRDS("data/cd4em_se.rds")
 
 # Prepare choices for dropdowns
 cell_types <- unique(as.character(se$cell_type_aggregated))
@@ -208,6 +194,7 @@ server <- function(input, output, session) {
   })
 } 
 
+# Run app
 shinyApp(ui, server)
 
 # Run locally
@@ -219,3 +206,4 @@ shinyApp(ui, server)
 #   renv::install("MangiolaLaboratory/cellNexus")
 #   renv::snapshot()
 #   rsconnect::deployApp('cd4em_shiny_app/')
+

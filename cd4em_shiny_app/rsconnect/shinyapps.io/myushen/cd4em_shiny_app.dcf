@@ -1,0 +1,10 @@
+name: cd4em_shiny_app
+title:
+username: myushen
+account: myushen
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 14994350
+bundleId: 10527601
+url: https://myushen.shinyapps.io/cd4em_shiny_app/
+version: 1

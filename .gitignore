@@ -1,0 +1,35 @@
+# History and session files
+.Rhistory
+.Rprofile
+.RData
+.Rproj.user/
+
+# RStudio project files
+*.Rproj
+
+# OS-specific
+.DS_Store
+
+# Packrat / renv
+renv/
+renv.lock
+
+# Shiny app deployment files
+*.rds
+
+# Data and output
+*.rds
+*.rda
+*.RData
+*.h5ad
+*.h5
+*.csv
+*.tsv
+*.feather
+*.parquet
+
+# Logs and cache
+*.log
+.cache/
+*.out
+*.err
