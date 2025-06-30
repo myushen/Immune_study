@@ -9,6 +9,7 @@ library(tibble)
 library(ggplot2)
 library(shiny)
 library(tidySingleCellExperiment)
+library(shinyWidgets)
 
 friendly_cols <- dittoSeq::dittoColors()
 
@@ -111,6 +112,13 @@ se <- readRDS("data/cd4em_se.rds")
 
 # Prepare choices for dropdowns
 cell_types <- unique(as.character(se$cell_type_aggregated))
+disease_groups <- unique(as.character(se$disease_groups))
+tissue_groups <- unique(as.character(se$tissue_groups))
+ethnicity_groups <- unique(as.character(se$ethnicity_groups))
+age_groups <- unique(as.character(se$age_groups))
+sex <- unique(as.character(se$sex))
+assay <- unique(as.character(se$assay))
+
 
 # To show overview visualisation for tbx21 first, then users can select cell type and expression level of interest
 ui <- fluidPage(
@@ -127,10 +135,25 @@ ui <- fluidPage(
       selectInput("gene_symbol", "Gene Symbol:", choices = genes_tbl$symbol, selected = genes_tbl$symbol[1])
     ),
     column(4,
-      selectInput("cd4em_group", "CD4 EM Expression Level:", choices = c("All", "High", "Low"), selected = "All")
+      pickerInput("cell_type", "Cell Type:", choices = cell_types, selected = cell_types, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
     ),
     column(4,
-      selectInput("cell_type", "Cell Type:", choices = c("All", cell_types), selected = "All")
+      pickerInput("disease_group", "Disease Groups:", choices = disease_groups, selected = disease_groups, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
+    ),
+    column(4,
+      pickerInput("tissue_group", "Tissue Groups:", choices = tissue_groups, selected = tissue_groups, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
+    ),
+    column(4,
+      pickerInput("ethnicity_group", "Ethnicity Groups:", choices = ethnicity_groups, selected = ethnicity_groups, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
+    ),
+    column(4,
+      pickerInput("age_group", "Age Groups:", choices = age_groups, selected = age_groups, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
+    ),
+    column(4,
+      pickerInput("sex", "Sex:", choices = sex, selected = sex, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
+    ),
+    column(4,
+      pickerInput("assay", "Assay:", choices = assay, selected = assay, multiple = TRUE, options = list('actions-box' = TRUE, 'live-search' = TRUE, size = 5))
     )
   ),
   # Plot appears below the dropdowns
@@ -158,13 +181,25 @@ server <- function(input, output, session) {
       inner_join(label_tbl) |>
       mutate(high_cd4 = ifelse(high_cd4 == TRUE, "High", "Low"))
 
-    # Filter based on user input
-    if (input$cd4em_group != "All") {
-      plot_data <- plot_data |> filter(high_cd4 == input$cd4em_group)
-    }
-    if (input$cell_type != "All") {
-      plot_data <- plot_data |> filter(cell_type_aggregated == input$cell_type)
-    }
+    # Check if any filter is empty
+    validate(
+      need(!is.null(input$cell_type) && length(input$cell_type) > 0, 'Please select at least one Cell Type.'),
+      need(!is.null(input$disease_group) && length(input$disease_group) > 0, 'Please select at least one Disease Group.'),
+      need(!is.null(input$tissue_group) && length(input$tissue_group) > 0, 'Please select at least one Tissue Group.'),
+      need(!is.null(input$ethnicity_group) && length(input$ethnicity_group) > 0, 'Please select at least one Ethnicity Group.'),
+      need(!is.null(input$age_group) && length(input$age_group) > 0, 'Please select at least one Age Group.'),
+      need(!is.null(input$sex) && length(input$sex) > 0, 'Please select at least one Sex.'),
+      need(!is.null(input$assay) && length(input$assay) > 0, 'Please select at least one Assay.')
+    )
+
+    # Multi-selection filtering
+    plot_data <- plot_data |> filter(cell_type_aggregated %in% input$cell_type)
+    plot_data <- plot_data |> filter(disease_groups %in% input$disease_group)
+    plot_data <- plot_data |> filter(tissue_groups %in% input$tissue_group)
+    plot_data <- plot_data |> filter(ethnicity_groups %in% input$ethnicity_group)
+    plot_data <- plot_data |> filter(age_groups %in% input$age_group)
+    plot_data <- plot_data |> filter(sex %in% input$sex)
+    plot_data <- plot_data |> filter(assay %in% input$assay)
 
     # Plot
     p <- ggplot(plot_data, aes(x = high_cd4, y = .data[[gene_id]])) +
@@ -173,12 +208,11 @@ server <- function(input, output, session) {
       labs(
         x = NULL,
         y = paste0(gene_symbol, " Expression"),
-        title = if (input$cell_type == "All" & input$cd4em_group == "All") {
+        title = if (length(input$cell_type) == length(cell_types)) {
           paste("Expression of", gene_symbol, "across all cell types and CD4EM groups")
         } else {
           paste("Expression of", gene_symbol,
-                if (input$cell_type != "All") paste("in", input$cell_type) else "",
-                if (input$cd4em_group != "All") paste("(", input$cd4em_group, ")") else "")
+                if (!is.null(input$cell_type) && length(input$cell_type) > 0 && length(input$cell_type) < length(cell_types)) paste("in", paste(input$cell_type, collapse = ", ")) else "")
         }
       ) +
       theme(
@@ -186,8 +220,8 @@ server <- function(input, output, session) {
         strip.text = element_text(size = 7)
       )
 
-    # Facet if showing all cell types
-    if (input$cell_type == "All") {
+    # Facet if showing multiple cell types
+    if (!is.null(input$cell_type) && length(input$cell_type) > 1) {
       p <- p + facet_grid(~ cell_type_aggregated)
     }
     p
