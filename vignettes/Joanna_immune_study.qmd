@@ -1,0 +1,614 @@
+---
+title: "Joanna_immune_study"
+format: 
+  html:
+    theme: minty
+    df-print: paged
+    code-line-numbers: true
+    # embed-resources: false
+    embed-resources: true
+    # resource-path: ["/gpfs/users/a1231556/quarto_resources"]
+    code-fold: true
+    code-fold-default: true
+knitr:
+  opts_chunk: 
+    message: false
+    warning: false
+    # echo: false
+comments:
+  hypothesis: 
+    theme: clean
+editor: source
+---
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(cellNexus)
+library(dplyr)
+library(duckdb)
+library(tidySingleCellExperiment)
+library(tidybulk)
+library(ggplot2)
+library(tidyHeatmap)
+library(hrbrthemes)
+library(scater)
+library(scran)
+library(tidyseurat)
+library(ggrepel)
+library(stringr)
+library(clusterProfiler)
+library(edgeR)
+library(purrr)
+library(tidyHeatmap)
+# Use colourblind-friendly colours
+friendly_cols <- dittoSeq::dittoColors()
+
+# Set theme
+custom_theme <-
+  list(
+    scale_fill_manual(values = friendly_cols),
+    scale_color_manual(values = friendly_cols),
+    theme_bw() +
+      theme(
+        panel.border = element_blank(),
+        axis.line = element_line(),
+        panel.grid.major = element_line(size = 0.2),
+        panel.grid.minor = element_line(size = 0.1),
+        text = element_text(size = 12),
+        legend.position = "bottom",
+        strip.background = element_blank(),
+        axis.title.x = element_text(margin = margin(t = 10, r = 10, b = 10, l = 10)),
+        axis.title.y = element_text(margin = margin(t = 10, r = 10, b = 10, l = 10)),
+        axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1)
+      )
+  )
+
+genes <- c("Tbx21", "Zeb2", "Gata3", "Rorc", "Bcl6", "Prmd1", "Tcf7", "Hif1a")
+genes_tbl <- tibble(
+  symbol = c("Tbx21", "Zeb2", "Gata3", "Rorc", "Bcl6", "Prmd1", "Tcf7", "Hif1a"),
+  ensemble_id = c("ENSG00000073861", "ENSG00000169554", "ENSG00000107485", "ENSG00000143365", 
+                  "ENSG00000113916", "ENSG00000057657", "ENSG00000081059", "ENSG00000100644")
+)
+disease_data_grouped <- read.csv("~/projects/cellNexus/Dharmesh_data/disease_data_grouped_2.csv", header = TRUE)
+```
+
+Question:
+
+Investigate conventional CD4+ T cells in all of PBMC datasets for the following genes of interest:
+Tbx21, Zeb2, Gata3, Rorc, Bcl6, Prmd1, Tcf7, Hif1a
+In which samples (across both healthy and disease/inflammatory conditions) do these transcription factors show peak expression?
+
+```{r}
+genes_tbl = genes_tbl |> mutate(ensemble_id_modified = paste0(ensemble_id, "_X"))
+```
+
+```{r eval=FALSE}
+se = get_metadata(cache_directory = "~/scratch/cache_temp") |> 
+  # Remove samples with small number of features
+  filter(feature_count > 500) |>
+  filter(empty_droplet == "FALSE") |>
+  filter(cell_type_unified_ensemble |> str_detect("cd4")) |> 
+  get_pseudobulk(cache_directory = "~/scratch/cellNexus/", 
+                 feature = genes_tbl$ensemble_id_modified)
+
+# Filter colSums > 0
+se = se[, colSums(counts(se)) > 0]
+
+gene_remove_suffix = sub("_X", "", rownames(se))
+rownames(se) <- gene_remove_suffix
+# change id to symbol from gene tbl
+id_to_symbol <- genes_tbl$symbol
+names(id_to_symbol) <- genes_tbl$ensemble_id
+rownames(se) <- id_to_symbol[rownames(se)]
+
+#se <- se |> base::saveRDS("~/scratch/cellNexus/cd4tcell_genes_pseudobulk.rds")
+
+se_tbl = se |> tidybulk()
+#se_tbl <- se_tbl |> saveRDS("~/scratch/cellNexus/cd4tcell_genes_pseudobulk_tidybulk_tbl.rds")
+```
+
+```{r echo=FALSE}
+se <- readRDS("~/scratch/cellNexus/cd4tcell_genes_pseudobulk.rds")
+se_tbl <- readRDS("~/scratch/cellNexus/cd4tcell_genes_pseudobulk_tidybulk_tbl.rds")
+```
+
+```{r}
+se_tbl = se_tbl |> left_join(genes_tbl, by = c(".feature" = "ensemble_id_modified")) |> 
+  # we should consider each cd4+ cell_type_unified_ensembl
+  mutate(counts_normalised = log1p(counts))
+
+se_tbl = se_tbl |> left_join(disease_data_grouped) |> 
+  mutate(tissue_groups = ifelse(is.na(tissue_groups) & tissue == "nose skin", 
+                                "integumentary system (skin)",
+                                tissue_groups))
+```
+
+##  Cell Type and Gene Expression
+This plot shows mean gene expression in which cell type has peak expression across all samples in healthy and disease conditions. Tcf7 is highly expressed in CD4 Naive cells, whereas Prmd1, Hif1a, and Gata3 are moderately expressed across CD4+ T cells subset. Additionally, Zeb2, Tbx21, Rorc, and Bcl6 expression levels are very weak or absent. 
+
+```{r fig.width=10, fig.height=12.5}
+se_tbl |> as_tibble() |> 
+  group_by(cell_type_unified_ensemble, symbol) |> 
+  summarise(counts_normalised_mean = mean(counts_normalised, na.rm = TRUE))  |> 
+  heatmap(
+    .column = cell_type_unified_ensemble,
+    .row = symbol,
+    .value = counts_normalised_mean)
+```
+
+## Boxplot of Gene Expression in CD4+ Cells Across Samples
+This plot provide a more detailed explanation of expression level in each cell type. It displays the gene expression levels in CD4+ cells across all healthy and disease samples.  
+Tcf7, Gata3, and Hif1a are relatively more highly expressed in CD4 naive cells compared to other CD4+ T cell subsets.
+
+```{r fig.width=10, fig.height=12.5}
+se_tbl |>
+  ungroup() |>
+  mutate(symbol = forcats::fct_reorder(symbol, counts_normalised, .fun = median, .desc = TRUE)) |>
+  ggplot(aes(x = symbol, y = counts_normalised, fill = forcats::fct_reorder(cell_type_unified_ensemble, counts_normalised, .fun=median, .desc=TRUE))) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  custom_theme +
+  labs(title = "Gene Expression in CD4+ Cells Across Samples", y = "Normalised Expression") +
+  guides(fill=guide_legend(title="cell_type_unified_ensemble"))
+
+```
+
+## Tissue and Gene Expression
+This heatmap shows the mean normalized expression of key transcription factors across various human tissues.  
+Tcf7 is highly expressed in the thymus, miscellaneous glands, spleen, bone marrow, and lymphatic tissues, consistent with its role in T cell development and maintenance. Gata3, Rorc, and Tbx21 exhibit low to moderate expression across many tissues, with occasional peaks that may reflect immune cell presence in those tissues. Hif1a and Prdm1 show moderate expression, suggesting broader physiological roles beyond immune specificity, while Bcl6 is largely absent, indicating limited T follicular helper cell presence in tissues.
+
+```{r fig.width=10, fig.height=12.5}
+#| fig-width: 10
+#| fig-height: 12.5
+se_tbl |> as_tibble() |> 
+  group_by(tissue_groups, symbol) |> 
+  summarise(counts_normalised_mean = mean(counts_normalised, na.rm = TRUE)) |> 
+  tidyHeatmap::heatmap(
+    .column = tissue_groups,
+    .row = symbol,
+    .value = counts_normalised_mean)
+```
+
+To determine how significantly a gene is expressed across sample groups, gene expression analysis is conducted.
+
+## Gene Expression Analysis for CD4 TEM Cells in Normal Blood
+This section explores whether high expression of TCF7 gene in a CD4+ T cell subset, CD4 TEM, in normal blood tissue is significantly differ from the low expression group. The high expression group includes samples in the top 25th percentile, while the low expression group comprises all remaining samples.
+
+```{r eval=FALSE}
+all_genes_tem_normal_blood = get_metadata(cache_directory = "~/scratch/cache_temp") |> 
+  # Remove samples with small number of features
+  filter(feature_count > 500) |>
+  filter(empty_droplet == "FALSE") |>
+  filter(cell_type_unified_ensemble == "cd4 tem",
+         tissue == "blood",
+         disease == "normal") |> 
+  get_pseudobulk(cache_directory = "~/scratch/cellNexus/")
+
+# Filter colSums > 0
+all_genes_tem_normal_blood = all_genes_tem_normal_blood[, colSums(counts(all_genes_tem_normal_blood)) > 0]
+
+#all_genes_tem_normal_blood <- all_genes_tem_normal_blood |> base::saveRDS("~/scratch/cellNexus/all_genes_tem_normal_blood_pseudobulk.rds")
+
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood |> tidybulk()
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood_tbl |> 
+  mutate(counts_normalised = log1p(counts)) |> 
+  left_join(disease_data_grouped) |> 
+  mutate(tissue_groups = ifelse(is.na(tissue_groups) & tissue == "nose skin", 
+                                "integumentary system (skin)",
+                                tissue_groups)) |> 
+  mutate(.feature = sub("_X", "", .feature)) |>
+  ensembl_to_symbol(.ensembl = ".feature", action = "add")
+all_genes_tem_normal_blood_tbl_keep_mtrib = all_genes_tem_normal_blood_tbl
+# Remove MT and Ribosome genes as they are often expressed highly
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood_tbl |> filter(!transcript |> str_like("MT%|RPS%|RPL%")) 
+```
+
+```{r echo=FALSE, message=FALSE}
+all_genes_tem_normal_blood <- readRDS("~/scratch/cellNexus/all_genes_tem_normal_blood_pseudobulk.rds")
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood |> tidybulk()
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood_tbl |> 
+  mutate(counts_normalised = log1p(counts)) |> 
+  left_join(disease_data_grouped) |> 
+  mutate(tissue_groups = ifelse(is.na(tissue_groups) & tissue == "nose skin", 
+                                "integumentary system (skin)",
+                                tissue_groups)) |> 
+  mutate(.feature = sub("_X", "", .feature)) |>
+  ensembl_to_symbol(.ensembl = ".feature", action = "add")
+all_genes_tem_normal_blood_tbl_keep_mtrib = all_genes_tem_normal_blood_tbl
+# Remove MT and Ribosome genes as they are often expressed highly
+all_genes_tem_normal_blood_tbl = all_genes_tem_normal_blood_tbl |> filter(!transcript |> str_like("MT%|RPS%|RPL%")) 
+```
+
+```{r eval=FALSE}
+tcf7_expr_sample <- all_genes_tem_normal_blood_tbl |>
+  filter(transcript == "TCF7") |>
+  group_by(.sample) |>
+  summarise(tcf7_expr = median(counts), .groups = "drop") |> 
+  mutate(Q1 = quantile(tcf7_expr, 0.25),
+         Q3 = quantile(tcf7_expr, 0.75),
+         TCF7_expression_level = case_when(
+           tcf7_expr >= Q3 ~ "high",
+           tcf7_expr < Q3 ~ "low"
+         )) |>
+  select(.sample, TCF7_expression_level)
+
+tcf7_expr_sample_keep_mtrib <- all_genes_tem_normal_blood_tbl_keep_mtrib |> 
+  filter(transcript == "TCF7") |>
+  group_by(.sample) |>
+  summarise(tcf7_expr = median(counts), .groups = "drop") |> 
+  mutate(Q1 = quantile(tcf7_expr, 0.25),
+         Q3 = quantile(tcf7_expr, 0.75),
+         TCF7_expression_level = case_when(
+           tcf7_expr >= Q3 ~ "high",
+           tcf7_expr < Q3 ~ "low"
+         )) |>
+  select(.sample, TCF7_expression_level)
+
+all_genes_tem_normal_blood_tbl_keep_mtrib_grouped <- all_genes_tem_normal_blood_tbl_keep_mtrib |> 
+   filter(cell_type_unified_ensemble == "cd4 tem", 
+         tissue == "blood", 
+         disease == "normal") |>
+  left_join(tcf7_expr_sample_keep_mtrib, by = ".sample") |>
+  filter(!is.na(TCF7_expression_level))
+
+all_genes_tem_normal_blood_tbl_grouped <- all_genes_tem_normal_blood_tbl |>
+  filter(cell_type_unified_ensemble == "cd4 tem", 
+         tissue == "blood", 
+         disease == "normal") |>
+  left_join(tcf7_expr_sample, by = ".sample") |>
+  filter(!is.na(TCF7_expression_level))
+
+```
+
+# Quality control
+## Filter lowly transcripted genes and normalise counts using TMM
+```{r eval=FALSE}
+filtered_tbl <- all_genes_tem_normal_blood_tbl_grouped |> 
+  keep_abundant(.sample = .sample, .transcript = .feature, .abundance = counts,
+                factor_of_interest = TCF7_expression_level, minimum_counts=1, minimum_proportion=0.4) |>
+  scale_abundance(.sample = .sample, .transcript = .feature, .abundance = counts)
+
+#all_genes_tem_normal_blood_tbl_grouped |> arrow::write_parquet("~/scratch/cellNexus/all_genes_tem_normal_blood_tbl_grouped.parquet")
+```
+
+```{r echo=FALSE}
+all_genes_tem_normal_blood_tbl_grouped <-
+  tbl(
+    dbConnect(duckdb::duckdb(), dbdir = ":memory:"),
+    sql("SELECT * FROM read_parquet('~/scratch/cellNexus/all_genes_tem_normal_blood_tbl_grouped.parquet')")
+  )
+
+all_genes_tem_normal_blood_tbl_grouped = all_genes_tem_normal_blood_tbl_grouped |> as_tibble()
+filtered_tbl <- all_genes_tem_normal_blood_tbl_grouped |> 
+  keep_abundant(.sample = .sample, .transcript = .feature, .abundance = counts,
+                factor_of_interest = TCF7_expression_level, minimum_counts=1,
+                minimum_proportion=0.4) |>
+  scale_abundance(.sample = .sample, .transcript = .feature, .abundance = counts)
+```
+
+## Visualise Gene overdispersion
+This gene overdispersion plot shows gene-level variability (biological noise) in relation to gene expression abundance (logCPM) from edgeR.  
+
+Lowly expressed genes (logCPM < 8) show high biological variability (BCV > 1.7), indicating they are less reliable for differential expression analysis, which need to be excluded. Moderately to highly expressed genes show reduced BCV, suggesting more stable and reproducible measurements across samples. The smooth decreasing trend in the blue line suggests successful dispersion estimation by edgeR.
+
+```{r}
+counts_matrix <- filtered_tbl |> dplyr::select(.sample, counts_scaled, transcript) |>
+  pivot_wider(names_from = .sample, values_from = counts_scaled) |>
+  tibble::column_to_rownames(var = "transcript") |>
+  as.matrix()
+
+group_vector <- filtered_tbl |>
+  distinct(.sample,TCF7_expression_level) |> 
+  pull(TCF7_expression_level)
+
+# Construct DGEList
+dge <- DGEList(counts = counts_matrix, group = factor(group_vector))
+dge <- calcNormFactors(dge)
+design <- model.matrix(~ group, data = data.frame(group = factor(group_vector)))
+dge <- estimateDisp(dge, design)
+
+# Extract and plot BCV
+plotBCV(dge)
+```
+
+## Exclude low logCPM genes
+```{r}
+genes_to_exclude <- rownames(dge)[dge$AveLogCPM<8]
+filtered_tbl |> dplyr::count(transcript %in% genes_to_exclude)
+filtered_tbl |> distinct(transcript) |> dplyr::count(transcript %in% genes_to_exclude)
+filtered_tbl <- filtered_tbl |> filter(!transcript %in% genes_to_exclude)
+```
+
+# DE analysis
+```{r eval=FALSE}
+de_tcf7 <- filtered_tbl |>
+  mutate(TCF7_expression_level = factor(TCF7_expression_level)) |>
+  test_differential_abundance(
+    .sample = .sample,
+    .transcript = .feature,
+    .abundance = counts_scaled,
+    .formula = ~ 0 + TCF7_expression_level,
+    .contrasts = c("TCF7_expression_levelhigh - TCF7_expression_levellow"),
+    omit_contrast_in_colnames = TRUE
+  )
+#de_tcf7 |> as_tibble() |> arrow::write_parquet("~/scratch/cellNexus/de_tcf7.parquet")
+
+de_tcf7_keep_mtrib <- all_genes_tem_normal_blood_tbl_keep_mtrib_grouped |> 
+  keep_abundant(.sample = .sample, .transcript = .feature, .abundance = counts,
+                factor_of_interest = TCF7_expression_level, minimum_counts=1, minimum_proportion=0.4) |>
+  scale_abundance(.sample = .sample, .transcript = .feature, .abundance = counts)
+
+de_tcf7_keep_mtrib <- de_tcf7_keep_mtrib |>
+  filter(!transcript %in% genes_to_exclude)
+
+de_tcf7_keep_mtrib <- de_tcf7_keep_mtrib |>
+  mutate(TCF7_expression_level = factor(TCF7_expression_level)) |>
+  test_differential_abundance(
+    .sample = .sample,
+    .transcript = .feature,
+    .abundance = counts_scaled,
+    .formula = ~ 0 + TCF7_expression_level,
+    .contrasts = c("TCF7_expression_levelhigh - TCF7_expression_levellow"),
+    omit_contrast_in_colnames = TRUE
+  )
+# de_tcf7_keep_mtrib |> as_tibble() |> arrow::write_parquet("~/scratch/cellNexus/de_tcf7_keep_mtrib.parquet")
+```
+
+```{r echo=FALSE}
+de_tcf7 <-  tbl(
+    dbConnect(duckdb::duckdb(), dbdir = ":memory:"),
+    sql("SELECT * FROM read_parquet('~/scratch/cellNexus/de_tcf7.parquet')")
+  )
+de_tcf7_keep_mtrib <-  tbl(
+    dbConnect(duckdb::duckdb(), dbdir = ":memory:"),
+    sql("SELECT * FROM read_parquet('~/scratch/cellNexus/de_tcf7_keep_mtrib.parquet')")
+  )
+de_tcf7 = de_tcf7 |> as_tibble()
+de_tcf7_keep_mtrib = de_tcf7_keep_mtrib |> as_tibble()
+```
+
+## Statistics data frame for genes with sufficient abundance across samples
+In order to find out top expressed genes between TCF7 high and low expression samples, differential expression analysis is performed.  
+logFC is indicative:  
+- logFC>0: gene is higher expressed in TCF7 high expression samples.  
+- logFC<0: gene is higher expressed in TCF7 low expression samples.  
+```{r}
+de_genes_tbl <- de_tcf7 |> pivot_transcript(.transcript = .feature)
+tbl <- de_tcf7 |> dplyr::select(transcript, logFC, logCPM, F, PValue, FDR) |> distinct()
+```
+
+## The number of differentially expressed genes
+```{r}
+de_genes_tbl |> filter(FDR < 0.05) |> summarise(num_de = n_distinct(transcript))
+```
+
+## Top DE genes
+```{r}
+topgenes_symbols <- de_genes_tbl |> arrange(FDR) |> head(10) |> pull(transcript)
+topgenes_symbols
+```
+
+## Volcano plot
+Volcano plots are a useful genome-wide plot for checking that the analysis looks good. Volcano plots enable us to visualise the significance of change (p-value) versus the fold change (logFC). Highly significant genes are towards the top of the plot. We can also colour significant genes (e.g. genes with false-discovery rate < 0.05).  
+
+Mitochondrial and ribosomal genes often dominate differential expression results due to their high and variable expression, which can arise from technical artifacts such as differences in cell quality, RNA integrity, or stress responses. Here, we compare top gene hits before and after applying the filter, the unfiltered data (right panel) shows a strong overrepresentation of ribosomal genes (e.g., RPL and RPS families), which can obscure biologically meaningful signals. After filtering (left panel), more diverse and interpretable genes such as KLF2, JUND, and TNFAIP3 become prominent, suggesting more biologically relevant pathways are revealed. Filtering these genes helps reduce technical noise, prevents skewed enrichment analyses, and improves interpretability by highlighting genes with functional relevance to the biological question.  
+
+The volcano plot of the left panel reveals that TCF7-high cells upregulate transcriptional and regulatory genes (e.g., MYH9, TNFAIP3, KLF2, ZFP36 and JUND) while downregulating genes associated with effector functions or migration (e.g., TMSB4X). This transcriptional program aligns with a less differentiated, stem-like or central memory T cell phenotype, consistent with TCF7’s role in maintaining progenitor T cells.  
+
+Details for up-regulated genes:  
+- MYH9: chaperones/cytoskeletal regulators — suggest enhanced cellular motility or activation.
+- TNFAIP3: a negative regulator of NF-κB, often elevated in immune-regulatory T cells.  
+-	KLF2: transcription factor linked to naïve/memory T cell maintenance; often high in stem-like cells.  
+- ZFP36: involved in mRNA decay of inflammatory genes — supports quiescence or anti-inflammatory roles.  
+- JUND: AP-1 family member, involved in early activation and cell survival.  
+These genes strongly support a stem-like, quiescent, regulatory, or early-activated T cell phenotype in TCF7-high cells.  
+
+Few significantly down-regulated genes, but notable:  
+- KLRB1, indicates reduced cytotoxic or innate-like T cell activity often associated with NK and MAIT cell function.  
+- C1orf56, potentially reflects diminished immune regulatory signaling or altered myeloid cell involvement.  
+- TMSB4X, suggests decreased actin remodeling activity, which may impact immune cell migration or activation.  
+
+```{r}
+significant_genes <- de_genes_tbl |> mutate(significant = FDR<0.05 & abs(logFC) >1) |> 
+  filter(significant == TRUE) |> pull(transcript)
+
+plot_list <- significant_genes |> map( ~
+  de_genes_tbl |> 
+
+  # Subset data
+    mutate(significant = FDR<0.05 & abs(logFC) >1) |>
+    mutate(transcript = ifelse(transcript == .x, as.character(transcript), "")) |>
+
+  # Plot
+    ggplot(aes(x = logFC, y = -log10(PValue), label=transcript)) +
+    geom_point(aes(color = significant, size = significant, alpha=significant)) +
+    ggrepel::geom_text_repel(min.segment.length = 0, seed = 42, box.padding = 0.5,
+                             force = 1, max.overlaps = Inf) +
+
+    # Custom scales
+    custom_theme +
+    labs(y = expression(-log[10](P))) +
+    scale_color_manual(values=c("black", "#e11f28")) +
+    scale_size_discrete(range = c(0, 1)) + 
+    labs(title = "Filtered data")
+)
+
+names(plot_list) <- significant_genes
+```
+
+::: {.panel-tabset group="gene"}
+```{r}
+#| output: asis
+#| warning: false
+#| echo: false
+for (i in seq_along(plot_list)){
+  cat("## ",names(plot_list)[i],"\n")
+  print(plot_list[[i]])
+  cat('\n\n')
+}
+```
+:::
+
+```{r}
+unfiltered_data_significant_genes <- de_tcf7_keep_mtrib |> pivot_transcript(.transcript = .feature)|> 
+                                 mutate(significant = FDR<0.05 & abs(logFC) >1) |> 
+  filter(significant == TRUE) |> pull(transcript)
+
+plot_list <- unfiltered_data_significant_genes |> map( ~
+  de_tcf7_keep_mtrib |> pivot_transcript(.transcript = .feature) |> 
+  # Subset data
+    mutate(significant = FDR<0.05 & abs(logFC) >1) |>
+    mutate(transcript = ifelse(transcript == .x, as.character(transcript), "")) |>
+
+  # Plot
+    ggplot(aes(x = logFC, y = -log10(PValue), label=transcript)) +
+    geom_point(aes(color = significant, size = significant, alpha=significant)) +
+    ggrepel::geom_text_repel(min.segment.length = 0, seed = 42, box.padding = 0.5,
+                             force = 1, max.overlaps = Inf) +
+
+    # Custom scales
+    custom_theme +
+    labs(y = expression(-log[10](P))) +
+    scale_color_manual(values=c("black", "#e11f28")) +
+    scale_size_discrete(range = c(0, 1)) +
+    labs(title = "Unfiltered data")
+)
+
+names(plot_list) <- unfiltered_data_significant_genes
+```
+
+
+::: {.panel-tabset group="gene"}
+```{r}
+#| output: asis
+#| warning: false
+#| echo: false
+imap(plot_list, function(plot, name) {
+  cat("##", name, "\n")
+  print(plot)
+  cat("\n\n")
+})
+```
+:::
+
+
+## MA plot
+This plot displays the differential gene expression between TCF7-high and TCF7-low sample groups. The x-axis shows the average expression of each gene in log CPM, and the y-axis represents the log fold change between the two groups.
+
+Most significantly differentially expressed genes (FDR < 0.05, in red) cluster on the left side of the plot, indicating that they are lowly expressed overall but show marked fold changes — typical in sparse expression settings like immune profiling. Some of these genes show high positive or negative fold changes, suggesting strong up- or down-regulation in TCF7-high samples. 
+
+```{r}
+de_genes_tbl |> 
+    ggplot(aes(x = logCPM, y = logFC, color = FDR < 0.05)) +
+    geom_point(alpha = 0.5, size = 1) +
+    scale_color_manual(values = c("black", "red")) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+        title = "MA Plot",
+        x = "log CPM",
+        y = "log Fold Change"
+    )
+  
+```
+
+## Top 10 Genes Normalised Counts Boxplot 
+```{r}
+top10_genes <- de_genes_tbl |>
+  filter(FDR < 0.05) |>
+  arrange(desc(abs(logFC))) |>
+  slice_head(n = 10) |>
+  pull(transcript)
+
+top10_expr_tbl <- filtered_tbl |>
+  filter(transcript %in% top10_genes)
+
+top10_expr_tbl |>
+  mutate(transcript = factor(transcript, levels = top10_genes)) |>
+  ggplot(aes(x = TCF7_expression_level, y = log1p(counts_scaled))) +
+  geom_boxplot(outlier.shape = NA, fill = "gray80") +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
+  facet_wrap(~ transcript, scales = "free_y", ncol = 5) +
+  custom_theme +
+  labs(
+    title = "Normalized Expression of Top 10 DE Genes",
+    x = "TCF7 Expression Group",
+    y = "Counts Normalised"
+  )
+```
+
+## Pathway analysis
+This GSEA dotplot highlights significantly enriched GO Biological Process terms based on logFC of ranked gene expression differences between TCF7-high and TCF7-low groups. The most enriched pathways include cellular respiration, aerobic respiration, and regulation of immune system process, suggesting that genes involved in mitochondrial metabolism and immune regulation are strongly associated with TCF7 expression. Additional enrichment in cell differentiation and cell adhesion points to a broader role of TCF7 in controlling cell fate and intercellular communication. The color intensity reflects highly significant adjusted p-values (as low as 4e-7), while the gene ratio and dot size indicate substantial representation of relevant genes in these pathways. Overall, this plot reveals coordinated upregulation of immune and metabolic programs in TCF7-high cells, emphasizing TCF7’s involvement in shaping T cell identity and function.
+```{r fig.width=10, fig.height=12.5}
+gene_ranks <- de_genes_tbl |>
+  filter(!is.na(logFC)) |>
+  arrange(desc(logFC)) |>
+  pull(logFC, name = transcript) 
+
+gsea_result <- gseGO(
+  geneList = gene_ranks,
+  OrgDb = org.Hs.eg.db::org.Hs.eg.db,
+  keyType = "SYMBOL", 
+  ont = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  verbose = FALSE,
+  eps = 0
+)
+gsea_result |>
+    dotplot(showCategory = 30)
+```
+
+<!-- Question 2: -->
+
+<!-- In these same samples are these genes also expressed in other immune cells (co-ordinated transcription). Investigating B cells, Plasma cells, NK, DCs, CD8, ILCs, Macrophages, also other CD4+ cells like Tregs and Tfh, etc. -->
+
+<!-- # Gene expression in selected cell types across all samples -->
+<!-- ## Load data -->
+```{r eval=FALSE, echo=FALSE}
+se_immune = get_metadata(cache_directory = "~/scratch/cache_temp") |> 
+  # Remove samples with small number of features
+  filter(feature_count > 500) |>
+  filter(empty_droplet == "FALSE") |>
+  filter(cell_type_unified_ensemble |> 
+           str_detect("cd4|b|plasma|nk|dc|cd8|ilc|macrophages|treg|tfh")) |> 
+  filter(!cell_type_unified_ensemble %in% c("blood", "bone", "Unknown")) |>
+  get_pseudobulk(cache_directory = "~/scratch/cellNexus", 
+                 feature = genes_tbl$ensemble_id_modified)
+# Filter colSums > 0
+se_immune = se_immune[, colSums(counts(se_immune)) > 0]
+#se_immune <- base::saveRDS(se_immune, "~/scratch/cellNexus/immune_cells_genes_pseudobulk.rds")
+
+se_immune_tbl = se_immune |> tidybulk()
+se_immune_tbl = se_immune_tbl |> left_join(genes_tbl, by = c(".feature" = "ensemble_id_modified")) |>
+  mutate(counts_normalised = log1p(counts))
+se_immune_tbl = se_immune_tbl |>  left_join(disease_data_grouped)
+
+se_immune_tbl |> saveRDS("~/scratch/cellNexus/immune_cells_genes_pseudobulk_tidybulk_tbl.rds")
+```
+
+```{r eval=FALSE, echo=FALSE}
+se_immune <- readRDS("~/scratch/cellNexus/immune_cells_genes_pseudobulk.rds")
+se_immune_tbl <- readRDS("~/scratch/cellNexus/immune_cells_genes_pseudobulk_tidybulk_tbl.rds")
+```
+
+<!-- ## UMAP -->
+```{r eval=FALSE, echo=FALSE}
+se_immune = se_immune |> scater::runPCA(ncomponents = 30)
+se_immune = se_immune |> scater::runUMAP(dimred = "PCA")
+plotUMAP(se_immune, color_by = "cell_type_unified_ensemble")
+```
+
+<!-- ## Boxplot of Gene Expression in Selected Cell Types Across Samples -->
+
+```{r fig.width=10, fig.height=12.5, eval=FALSE, echo=FALSE}
+se_immune_tbl |> 
+  
+  mutate(symbol = forcats::fct_reorder(symbol, counts_normalised, .fun = median, .desc = TRUE)) |>
+  ggplot(aes(x = symbol, y = counts_normalised, fill = cell_type_unified_ensemble)) + 
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  custom_theme +
+  labs(title = "Gene Expression in Selected Immune Cells Across Samples", y = "Normalised Expression")
+
+```
