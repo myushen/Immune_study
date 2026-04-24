@@ -15,14 +15,11 @@ renv/
 renv.lock
 
 # Shiny app deployment files
-*.rds
 
 # Data and output
-*.rds
 *.rda
 *.RData
 *.h5ad
-*.h5
 *.csv
 *.tsv
 *.feather
