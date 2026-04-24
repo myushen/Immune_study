@@ -119,9 +119,9 @@ cell_type_coarse <- tribble(
 )
 
 # Load data
-data_dir <- "~/projects/cellNexus/Joanna_immune_study/data"
+data_dir <- "/Users/shen.m/projects/cellNexus/Joanna_immune_study/data"
 
-se <- readH5AD(file.path(data_dir, "cd4em_se.h5ad"))
+se <- readH5AD(file.path(data_dir, "cd4em_se.h5ad"), reader = "R", use_hdf5 = T)
 
 # Prepare choices for dropdowns
 cell_types <- unique(as.character(se$cell_type_aggregated))
