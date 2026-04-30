@@ -318,7 +318,7 @@ server <- function(input, output, session) {
 
     expr_label <- paste0(gene_symbol, " Expression (", toupper(selected_assay), ")")
 
-    sex_palette <- c("#0072B2", "#D55E00", "#999999")   # Wong colour-blind-safe blue / vermillion / grey (unknown)
+    sex_palette <- c("#D55E00", "#0072B2", "#999999")   # Wong colour-blind-safe blue / vermillion / grey (unknown)
 
     if (isTRUE(input$stratify_sex)) {
       p <- ggplot(plot_data, aes(x = .data[[x_var]], y = .data[[gene_id]], fill = sex, color = sex)) +
